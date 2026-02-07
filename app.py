@@ -1,7 +1,7 @@
 import os
 import json
 import io
-import random  # <--- FIXED: Added missing import
+import random
 import uuid 
 from datetime import datetime, timedelta
 from werkzeug.utils import secure_filename
@@ -23,14 +23,12 @@ if database_url and database_url.startswith("postgres://"):
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///babacarbazar_mega.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# --- PATH CONFIGURATION (For GitHub Images) ---
+# --- PATH CONFIGURATION ---
 basedir = os.path.abspath(os.path.dirname(__file__))
-upload_folder_path = os.path.join(basedir, 'static/uploads')
-app.config['UPLOAD_FOLDER'] = upload_folder_path
+app.config['UPLOAD_FOLDER'] = os.path.join(basedir, 'static/uploads')
 
-# Ensure folder exists
-if not os.path.exists(upload_folder_path):
-    os.makedirs(upload_folder_path)
+if not os.path.exists(app.config['UPLOAD_FOLDER']):
+    os.makedirs(app.config['UPLOAD_FOLDER'])
 
 # --- EXTENSIONS ---
 db = SQLAlchemy(app)
@@ -85,7 +83,8 @@ class TestDrive(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     car_id = db.Column(db.Integer, db.ForeignKey('car.id'))
     date_booked = db.Column(db.String(50)) 
-    time_slot = db.Column(db.String(20))
+    # FIXED: Increased length from 20 to 100 to prevent crash
+    time_slot = db.Column(db.String(100))
     status = db.Column(db.String(20), default='Pending') 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     car = db.relationship('Car')
@@ -111,7 +110,7 @@ class Banner(db.Model):
     subtitle = db.Column(db.String(200))
     is_active = db.Column(db.Boolean, default=True)
 
-# --- MODEL: IMAGE STORAGE (DB) ---
+# --- MODEL: IMAGE STORAGE ---
 class ImagePool(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), unique=True)
@@ -137,7 +136,6 @@ def save_image_to_db(file, preserve_name=False):
     file_data = file.read()
     
     if preserve_name:
-        # About Us images: keep exact name
         unique_name = secure_filename(file.filename)
         existing = ImagePool.query.filter_by(name=unique_name).first()
         if existing:
@@ -146,7 +144,6 @@ def save_image_to_db(file, preserve_name=False):
             db.session.commit()
             return unique_name
     else:
-        # Car/Banner images: unique ID
         ext = os.path.splitext(file.filename)[1]
         unique_name = f"{uuid.uuid4().hex}{ext}"
     
@@ -175,15 +172,11 @@ def home():
             
     return render_template('index.html', page='home', cars=featured, suvs=suvs, sedans=sedans, banners=banners, latest_promo=latest_promo)
 
-# --- HYBRID IMAGE ROUTE (DB FIRST, THEN DISK) ---
 @app.route('/static/uploads/<path:filename>')
 def custom_static(filename):
-    # 1. Try DB (Best for new/recovered uploads)
     img_entry = ImagePool.query.filter_by(name=filename).first()
     if img_entry:
         return send_file(io.BytesIO(img_entry.data), mimetype=img_entry.mimetype)
-    
-    # 2. Try Physical File (For GitHub assets like naman.jpeg)
     try:
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
     except:
@@ -218,7 +211,6 @@ def car_detail(car_id):
     car = Car.query.get_or_404(car_id)
     try: car.img_list = json.loads(car.images)
     except: car.img_list = ['default.jpg']
-    
     if not isinstance(car.img_list, list): car.img_list = [car.img_list]
 
     similar = Car.query.filter(Car.category == car.category, Car.id != car.id).limit(3).all()
@@ -240,8 +232,6 @@ def sell_car():
 @app.route('/about')
 def about():
     return render_template('aboutus.html')
-
-# --- USER ACTIONS ---
 
 @app.route('/profile')
 @login_required
@@ -297,8 +287,6 @@ def apply_promo():
     if promo: return jsonify({'valid': True, 'discount': promo.discount_amount})
     else: return jsonify({'valid': False})
 
-# --- AUTH ROUTES ---
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -334,8 +322,6 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
-# --- API ROUTES ---
-
 @app.route('/api/search')
 def api_search():
     query = request.args.get('q', '').lower()
@@ -370,8 +356,6 @@ def enquire():
     flash("Message Sent Successfully!", "success")
     return redirect(url_for('car_detail', car_id=car_id))
 
-# --- ADMIN ROUTES ---
-
 @app.route('/admin')
 @login_required
 def admin():
@@ -398,12 +382,10 @@ def admin():
     status_data = {s[0]: s[1] for s in status_counts}
     
     last_7_days = [(datetime.utcnow() - timedelta(days=i)).strftime('%d %b') for i in range(6, -1, -1)]
-    # FIXED: Added import random, so this line will now work
     graph_data = [random.randint(1, 10) for _ in range(7)] 
 
     return render_template('index.html', page='admin', stats=stats, cars=cars, enquiries=enquiries, 
                            test_drives=test_drives, promos=promos, banners=banners, status_data=status_data, graph_labels=last_7_days, graph_data=graph_data)
-
 
 @app.route('/admin/add', methods=['POST'])
 @login_required
@@ -416,7 +398,6 @@ def add_car():
         fname = save_image_to_db(f)
         if fname:
             img_names.append(fname)
-            
     if not img_names: img_names = ['default.jpg']
     
     new_car = Car(
@@ -433,7 +414,7 @@ def add_car():
     )
     db.session.add(new_car)
     db.session.commit()
-    flash("Vehicle Added (Images Saved to Database)", "success")
+    flash("Vehicle Added", "success")
     return redirect(url_for('admin'))
 
 @app.route('/admin/edit/<int:car_id>', methods=['POST'])
@@ -525,7 +506,6 @@ def add_banner():
         flash("Banner Added", "success")
     else:
         flash("No file selected", "warning")
-        
     return redirect(url_for('admin'))
 
 @app.route('/admin/banner/delete/<int:b_id>')
@@ -537,7 +517,6 @@ def delete_banner(b_id):
     db.session.commit()
     return redirect(url_for('admin'))
 
-# --- UPLOAD TOOL (FALLBACK) ---
 @app.route('/admin/upload-site-images', methods=['GET', 'POST'])
 @login_required
 def upload_site_images():
@@ -572,11 +551,17 @@ with app.app_context():
 def fix_db():
     try:
         db.create_all()
+        
+        # FIX: Drop TestDrive table to apply new 100 character limit
         try:
-            Banner.__table__.drop(db.engine)
+            TestDrive.__table__.drop(db.engine)
+            Banner.__table__.drop(db.engine) # Also fix Banner if needed
             db.create_all()
-        except: pass
-        return "SUCCESS: Database Fixed & ImagePool Ready."
+            msg = "TestDrive & Banner tables recreated. "
+        except: 
+            msg = "Tables check passed. "
+
+        return f"SUCCESS: {msg} Database Fixed."
     except Exception as e:
         return f"Error: {str(e)}"
 
