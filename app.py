@@ -1,6 +1,7 @@
 import os
 import json
 import io
+import random  # <--- FIXED: Added missing import
 import uuid 
 from datetime import datetime, timedelta
 from werkzeug.utils import secure_filename
@@ -22,10 +23,14 @@ if database_url and database_url.startswith("postgres://"):
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///babacarbazar_mega.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Define the physical upload folder (for GitHub assets)
+# --- PATH CONFIGURATION (For GitHub Images) ---
 basedir = os.path.abspath(os.path.dirname(__file__))
-app.config['UPLOAD_FOLDER'] = os.path.join(basedir, 'static/uploads')
-# -----------------------------
+upload_folder_path = os.path.join(basedir, 'static/uploads')
+app.config['UPLOAD_FOLDER'] = upload_folder_path
+
+# Ensure folder exists
+if not os.path.exists(upload_folder_path):
+    os.makedirs(upload_folder_path)
 
 # --- EXTENSIONS ---
 db = SQLAlchemy(app)
@@ -106,7 +111,7 @@ class Banner(db.Model):
     subtitle = db.Column(db.String(200))
     is_active = db.Column(db.Boolean, default=True)
 
-# --- MODEL: IMAGE STORAGE ---
+# --- MODEL: IMAGE STORAGE (DB) ---
 class ImagePool(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), unique=True)
@@ -132,6 +137,7 @@ def save_image_to_db(file, preserve_name=False):
     file_data = file.read()
     
     if preserve_name:
+        # About Us images: keep exact name
         unique_name = secure_filename(file.filename)
         existing = ImagePool.query.filter_by(name=unique_name).first()
         if existing:
@@ -140,6 +146,7 @@ def save_image_to_db(file, preserve_name=False):
             db.session.commit()
             return unique_name
     else:
+        # Car/Banner images: unique ID
         ext = os.path.splitext(file.filename)[1]
         unique_name = f"{uuid.uuid4().hex}{ext}"
     
@@ -168,21 +175,18 @@ def home():
             
     return render_template('index.html', page='home', cars=featured, suvs=suvs, sedans=sedans, banners=banners, latest_promo=latest_promo)
 
-# --- FIXED: HYBRID STATIC ROUTE (DB + DISK) ---
-# This is the crucial fix. It checks DB first, then checks the real folder.
+# --- HYBRID IMAGE ROUTE (DB FIRST, THEN DISK) ---
 @app.route('/static/uploads/<path:filename>')
 def custom_static(filename):
-    # 1. Try DB (For new uploads)
+    # 1. Try DB (Best for new/recovered uploads)
     img_entry = ImagePool.query.filter_by(name=filename).first()
     if img_entry:
         return send_file(io.BytesIO(img_entry.data), mimetype=img_entry.mimetype)
     
     # 2. Try Physical File (For GitHub assets like naman.jpeg)
-    # We use send_from_directory to safely serve files from the folder
     try:
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
     except:
-        # 3. 404 Not Found
         return "Image not found", 404
 
 @app.route('/inventory')
@@ -394,6 +398,7 @@ def admin():
     status_data = {s[0]: s[1] for s in status_counts}
     
     last_7_days = [(datetime.utcnow() - timedelta(days=i)).strftime('%d %b') for i in range(6, -1, -1)]
+    # FIXED: Added import random, so this line will now work
     graph_data = [random.randint(1, 10) for _ in range(7)] 
 
     return render_template('index.html', page='admin', stats=stats, cars=cars, enquiries=enquiries, 
@@ -532,29 +537,24 @@ def delete_banner(b_id):
     db.session.commit()
     return redirect(url_for('admin'))
 
-# --- SPECIAL ROUTE: UPLOAD SITE ASSETS (OWNER IMAGES) ---
-# Use this to upload specific named files like 'naman.jpeg'
+# --- UPLOAD TOOL (FALLBACK) ---
 @app.route('/admin/upload-site-images', methods=['GET', 'POST'])
 @login_required
 def upload_site_images():
     if not current_user.is_admin: return redirect(url_for('home'))
-    
     if request.method == 'POST':
         files = request.files.getlist('files')
         uploaded = []
         for f in files:
-            # force preserve_name=True so 'naman.jpeg' stays 'naman.jpeg'
             name = save_image_to_db(f, preserve_name=True)
             uploaded.append(name)
-        return f"<h3>Uploaded Successfully: {', '.join(uploaded)}</h3><a href='/admin'>Back to Admin</a>"
-    
-    # Simple form to upload files
+        return f"<h3>Uploaded: {', '.join(uploaded)}</h3><a href='/admin'>Back</a>"
     return """
     <html><body>
         <h2>Upload Site Assets (Owner Images)</h2>
         <form method="post" enctype="multipart/form-data">
             <input type="file" name="files" multiple>
-            <input type="submit" value="Upload Images">
+            <input type="submit" value="Upload">
         </form>
     </body></html>
     """
