@@ -43,7 +43,6 @@ class User(UserMixin, db.Model):
     password = db.Column(db.String(200))
     is_admin = db.Column(db.Boolean, default=False)
     wishlist = db.relationship('Wishlist', backref='user', lazy=True)
-    test_drives = db.relationship('TestDrive', backref='user', lazy=True)
     reviews = db.relationship('Review', backref='user', lazy=True)
 
 class Car(db.Model):
@@ -76,17 +75,6 @@ class Wishlist(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     car_id = db.Column(db.Integer, db.ForeignKey('car.id'))
-    car = db.relationship('Car')
-
-class TestDrive(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    car_id = db.Column(db.Integer, db.ForeignKey('car.id'))
-    date_booked = db.Column(db.String(50)) 
-    # FIXED: Increased limit to 100 chars to fix crash
-    time_slot = db.Column(db.String(100))
-    status = db.Column(db.String(20), default='Pending') 
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     car = db.relationship('Car')
 
 class Review(db.Model):
@@ -241,8 +229,7 @@ def profile():
     for car in wishlist_cars:
         try: car.img_list = json.loads(car.images)
         except: car.img_list = ['default.jpg']
-    my_drives = TestDrive.query.filter_by(user_id=current_user.id).order_by(TestDrive.created_at.desc()).all()
-    return render_template('index.html', page='profile', wishlist=wishlist_cars, drives=my_drives)
+    return render_template('index.html', page='profile', wishlist=wishlist_cars)
 
 @app.route('/wishlist/toggle/<int:car_id>')
 @login_required
@@ -252,21 +239,6 @@ def toggle_wishlist(car_id):
     else: db.session.add(Wishlist(user_id=current_user.id, car_id=car_id))
     db.session.commit()
     return redirect(request.referrer or url_for('home'))
-
-@app.route('/book-test-drive', methods=['POST'])
-@login_required
-def book_test_drive():
-    car_id = request.form.get('car_id')
-    date = request.form.get('date')
-    time = request.form.get('time')
-    if not date or not time:
-        flash("Please select both Date and Time.", "warning")
-        return redirect(request.referrer)
-    new_td = TestDrive(user_id=current_user.id, car_id=car_id, date_booked=date, time_slot=time)
-    db.session.add(new_td)
-    db.session.commit()
-    flash("Test Drive Requested!", "success")
-    return redirect(url_for('profile'))
 
 @app.route('/add-review', methods=['POST'])
 @login_required
@@ -374,7 +346,6 @@ def admin():
         except: car.img_list = ['default.jpg']
         
     enquiries = Enquiry.query.order_by(Enquiry.date.desc()).all()
-    test_drives = TestDrive.query.order_by(TestDrive.created_at.desc()).all()
     promos = PromoCode.query.all()
     banners = Banner.query.all() 
     
@@ -385,7 +356,7 @@ def admin():
     graph_data = [random.randint(1, 10) for _ in range(7)] 
 
     return render_template('index.html', page='admin', stats=stats, cars=cars, enquiries=enquiries, 
-                           test_drives=test_drives, promos=promos, banners=banners, status_data=status_data, graph_labels=last_7_days, graph_data=graph_data)
+                           promos=promos, banners=banners, status_data=status_data, graph_labels=last_7_days, graph_data=graph_data)
 
 @app.route('/admin/add', methods=['POST'])
 @login_required
@@ -438,7 +409,6 @@ def delete_car(car_id):
     if car:
         Wishlist.query.filter_by(car_id=car.id).delete()
         Enquiry.query.filter_by(car_id=car.id).delete()
-        TestDrive.query.filter_by(car_id=car.id).delete()
         Review.query.filter_by(car_id=car.id).delete()
         db.session.delete(car)
         db.session.commit()
@@ -459,15 +429,6 @@ def delete_enquiry(enq_id):
     if not current_user.is_admin: return redirect(url_for('home'))
     enq = Enquiry.query.get(enq_id)
     db.session.delete(enq)
-    db.session.commit()
-    return redirect(url_for('admin'))
-
-@app.route('/admin/testdrive/update/<int:td_id>/<status>')
-@login_required
-def update_testdrive(td_id, status):
-    if not current_user.is_admin: return redirect(url_for('home'))
-    td = TestDrive.query.get(td_id)
-    td.status = status
     db.session.commit()
     return redirect(url_for('admin'))
 
@@ -547,19 +508,15 @@ with app.app_context():
         db.session.commit()
         print("Admin Account Created.")
 
-# --- CRITICAL FIX ROUTE ---
 @app.route('/fix-db')
 def fix_db():
     try:
-        # DROP the TestDrive table to reset schema limits
-        TestDrive.__table__.drop(db.engine)
-        
-        # Also drop Banner to ensure it matches
+        # Also drop Banner to ensure it ensures it matches
         try: Banner.__table__.drop(db.engine)
         except: pass
         
         db.create_all()
-        return "SUCCESS: Database Fixed! TestDrive table recreated with larger limit."
+        return "SUCCESS: Database Fixed! Banner table recreated with larger limit."
     except Exception as e:
         # If table didn't exist or other error, try creating anyway
         db.create_all()
