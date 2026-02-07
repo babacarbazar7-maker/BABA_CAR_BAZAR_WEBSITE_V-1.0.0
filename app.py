@@ -26,12 +26,19 @@ if database_url and database_url.startswith("postgres://"):
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///babacarbazar_mega.db'
 # -------------------------------------------------------------
 
-app.config['UPLOAD_FOLDER'] = 'static/uploads'
+# --- PATH CONFIGURATION ---
+# Get the folder where app.py is running
+basedir = os.path.abspath(os.path.dirname(__file__))
+
+# Create the absolute path to static/uploads
+upload_folder = os.path.join(basedir, 'static/uploads')
+app.config['UPLOAD_FOLDER'] = upload_folder
 app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024
 
-if not os.path.exists(app.config['UPLOAD_FOLDER']):
-    os.makedirs(app.config['UPLOAD_FOLDER'])
-
+# Ensure the folder exists
+if not os.path.exists(upload_folder):
+    os.makedirs(upload_folder)
+    print(f"Created upload folder at: {upload_folder}")
 # --- EXTENSIONS ---
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
@@ -494,4 +501,5 @@ with app.app_context():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
 
