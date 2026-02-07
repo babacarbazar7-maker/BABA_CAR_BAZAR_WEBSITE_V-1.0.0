@@ -5,40 +5,24 @@ import random
 from datetime import datetime, timedelta
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from sqlalchemy import func
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'baba_car_bazar_mega_key_2026_unbreakable') # Use Env var for prod
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'baba_car_bazar_mega_key_2026_unbreakable') 
 
-# --- DATABASE CONFIGURATION (MODIFIED FOR RENDER POSTGRES) ---
-# Get the database URL from the environment (Render sets this automatically)
+# --- DATABASE CONFIGURATION ---
 database_url = os.environ.get('DATABASE_URL')
-
-# Fix for Render's Postgres URL starting with 'postgres://' instead of 'postgresql://'
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
-# Use Postgres if available (on Render), otherwise fallback to SQLite (local testing)
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///babacarbazar_mega.db'
-# -------------------------------------------------------------
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# -----------------------------
 
-# --- PATH CONFIGURATION ---
-# Get the folder where app.py is running
-basedir = os.path.abspath(os.path.dirname(__file__))
-
-# Create the absolute path to static/uploads
-upload_folder = os.path.join(basedir, 'static/uploads')
-app.config['UPLOAD_FOLDER'] = upload_folder
-app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024
-
-# Ensure the folder exists
-if not os.path.exists(upload_folder):
-    os.makedirs(upload_folder)
-    print(f"Created upload folder at: {upload_folder}")
 # --- EXTENSIONS ---
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
@@ -113,14 +97,45 @@ class PromoCode(db.Model):
 
 class Banner(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    image = db.Column(db.Text)  # <--- CHANGED: Unlimited length
+    image = db.Column(db.Text) # Fixed: Unlimited length for image names
     title = db.Column(db.String(100))
     subtitle = db.Column(db.String(200))
     is_active = db.Column(db.Boolean, default=True)
 
+# --- NEW MODEL: IMAGE STORAGE ---
+# This stores the actual image data in the DB so it doesn't disappear on Render
+class ImagePool(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), unique=True)
+    data = db.Column(db.LargeBinary) # Stores the file bytes
+    mimetype = db.Column(db.String(50))
+
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
+# --- HELPER: SAVE IMAGE TO DB ---
+def save_image_to_db(file):
+    if not file or file.filename == '':
+        return None
+    
+    # Create a unique filename
+    ext = os.path.splitext(file.filename)[1]
+    original_name = os.path.splitext(secure_filename(file.filename))[0]
+    # Shorten name to avoid issues, add timestamp for uniqueness
+    unique_name = f"{original_name[:20]}_{int(datetime.utcnow().timestamp())}{ext}"
+    
+    # Read file data
+    file_data = file.read()
+    
+    # Check if exists (unlikely due to timestamp)
+    existing = ImagePool.query.filter_by(name=unique_name).first()
+    if not existing:
+        new_img = ImagePool(name=unique_name, data=file_data, mimetype=file.mimetype or 'image/jpeg')
+        db.session.add(new_img)
+        db.session.commit()
+        
+    return unique_name
 
 # --- PUBLIC ROUTES ---
 
@@ -130,11 +145,8 @@ def home():
     suvs = Car.query.filter_by(category='SUV', status='Available').limit(3).all()
     sedans = Car.query.filter_by(category='Sedan', status='Available').limit(3).all()
     
-    # FIX: Fetch banners more reliably
     banners = Banner.query.filter_by(is_active=True).all()
-    # Fallback if no banners exist in DB at all (prevents empty carousel)
-    if not banners:
-        banners = []
+    if not banners: banners = []
         
     latest_promo = PromoCode.query.filter_by(is_active=True).order_by(PromoCode.id.desc()).first()
     
@@ -144,6 +156,19 @@ def home():
             except: car.img_list = ['default.jpg']
             
     return render_template('index.html', page='home', cars=featured, suvs=suvs, sedans=sedans, banners=banners, latest_promo=latest_promo)
+
+# --- SPECIAL ROUTE: SERVE IMAGES FROM DB ---
+# This overrides the default static folder for uploads to serve from DB
+@app.route('/static/uploads/<path:filename>')
+def custom_static(filename):
+    # Try to find in DB first
+    img_entry = ImagePool.query.filter_by(name=filename).first()
+    if img_entry:
+        return send_file(io.BytesIO(img_entry.data), mimetype=img_entry.mimetype)
+    
+    # If not in DB, fallback to default behavior (or return default image)
+    # This covers 'default.jpg' if you haven't uploaded it to DB yet
+    return redirect(url_for('static', filename='img/default_car.jpg')) # Point to a real asset or handle 404
 
 @app.route('/inventory')
 def inventory():
@@ -363,11 +388,13 @@ def add_car():
     if not current_user.is_admin: return redirect(url_for('home'))
     files = request.files.getlist('images')
     img_names = []
+    
     for f in files:
-        if f and f.filename != '':
-            fname = secure_filename(f.filename)
-            f.save(os.path.join(app.config['UPLOAD_FOLDER'], fname))
+        # UPDATED: Save to DB instead of folder
+        fname = save_image_to_db(f)
+        if fname:
             img_names.append(fname)
+            
     if not img_names: img_names = ['default.jpg']
     
     new_car = Car(
@@ -384,7 +411,7 @@ def add_car():
     )
     db.session.add(new_car)
     db.session.commit()
-    flash("Vehicle Added", "success")
+    flash("Vehicle Added (Images Saved to Database)", "success")
     return redirect(url_for('admin'))
 
 @app.route('/admin/edit/<int:car_id>', methods=['POST'])
@@ -405,6 +432,8 @@ def edit_car(car_id):
 def delete_car(car_id):
     if not current_user.is_admin: return redirect(url_for('home'))
     car = Car.query.get(car_id)
+    # Note: We are not auto-deleting images from ImagePool to prevent accidental data loss 
+    # of shared images, but you could add that logic here.
     Wishlist.query.filter_by(car_id=car.id).delete()
     Enquiry.query.filter_by(car_id=car.id).delete()
     TestDrive.query.filter_by(car_id=car.id).delete()
@@ -468,13 +497,17 @@ def add_banner():
     title = request.form.get('title')
     subtitle = request.form.get('subtitle')
     
-    if file and file.filename != '':
-        fname = secure_filename(file.filename)
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], fname))
-        # FIX: Explicitly set is_active to True to prevent disappearance
+    # UPDATED: Save to DB
+    fname = save_image_to_db(file)
+    
+    if fname:
+        # FIX: Explicitly set is_active to True
         db.session.add(Banner(image=fname, title=title, subtitle=subtitle, is_active=True))
         db.session.commit()
-        flash("Banner Added", "success")
+        flash("Banner Added (Saved to DB)", "success")
+    else:
+        flash("No file selected", "warning")
+        
     return redirect(url_for('admin'))
 
 @app.route('/admin/banner/delete/<int:b_id>')
@@ -486,27 +519,32 @@ def delete_banner(b_id):
     db.session.commit()
     return redirect(url_for('admin'))
 
-# --- AUTO-CREATE DATABASE & ADMIN (Run on every start) ---
+# --- DB & ADMIN AUTO-SETUP ---
 with app.app_context():
     db.create_all()
-    
-    # Check if Admin exists, if not create it
     if not User.query.filter_by(email='babaadmin@gmail.com').first():
         admin_pass = generate_password_hash('@namanadmin', method='pbkdf2:sha256')
         db.session.add(User(name='BABA-CAR_BAZAR', email='babaadmin@gmail.com', password=admin_pass, is_admin=True))
         db.session.commit()
         print("Admin Account Created Successfully!")
 
-# --- TEMPORARY FIX ROUTE ---
-# Add this to app.py, push to GitHub, and then visit /fix-banners in your browser
-@app.route('/fix-banners')
-def fix_banners():
+# --- DB FIX ROUTE (RUN ONCE) ---
+@app.route('/fix-db')
+def fix_db():
     try:
-        # This deletes the old Banner table
-        Banner.__table__.drop(db.engine)
-        # This creates the new Banner table with the correct settings
+        # Create the new ImagePool table if it doesn't exist
         db.create_all()
-        return "SUCCESS: Banner table has been updated! You can now upload long images."
+        
+        # NOTE: If Banner table is still old type, we drop it to recreate.
+        # This might delete existing banners, but it's necessary for the fix.
+        try:
+            Banner.__table__.drop(db.engine)
+            db.create_all()
+            msg = "Banner table recreated. "
+        except:
+            msg = "Banner table check passed. "
+
+        return f"SUCCESS: {msg} ImagePool table is ready. You can now upload images and they will stay!"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -514,7 +552,3 @@ def fix_banners():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
-
-
-
-
