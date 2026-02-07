@@ -118,6 +118,8 @@
         }
         .detail-img-box img {
             width: 100%;
+            height: 500px; /* FIXED HEIGHT FOR DETAIL IMAGES */
+            object-fit: cover;
             border-radius: 20px;
             border: 1px solid var(--glass-border);
             box-shadow: 0 20px 40px rgba(0,0,0,0.5);
@@ -210,7 +212,6 @@
             height: 80vh;
             object-fit: cover;
             filter: brightness(0.9);
-        
         }
         .promo-badge {
             background: rgba(0,0,0,0.6);
@@ -574,8 +575,8 @@
         {% elif page == 'profile' %}
             <div class="container pt-4">
                 <h2 class="fw-bold mb-4" style="color: var(--text-color);">My Dashboard</h2>
-                <div class="row">
-                    <div class="col-md-6 mb-4">
+                <div class="row justify-content-center">
+                    <div class="col-md-10 mb-4">
                         <div class="glass-panel p-4 h-100">
                             <h4 class="mb-3 text-danger"><i class="fas fa-heart me-2"></i> Wishlist</h4>
                             {% if not wishlist %}<p class="text-muted">No saved cars yet.</p>{% endif %}
@@ -589,25 +590,6 @@
                                     </div>
                                     <a href="/car/{{ car.id }}" class="btn btn-sm btn-outline-light"><i class="fas fa-eye"></i></a>
                                     <a href="/wishlist/toggle/{{ car.id }}" class="btn btn-sm btn-outline-danger ms-1"><i class="fas fa-times"></i></a>
-                                </div>
-                                {% endfor %}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-4">
-                        <div class="glass-panel p-4 h-100">
-                            <h4 class="mb-3 text-warning"><i class="fas fa-car me-2"></i> Test Drives</h4>
-                            {% if not drives %}<p class="text-muted">No bookings yet.</p>{% endif %}
-                            <div class="d-flex flex-column gap-3">
-                                {% for td in drives %}
-                                <div class="bg-dark p-3 rounded border-start border-4 border-{{ 'success' if td.status == 'Confirmed' else 'warning' }}">
-                                    <div class="d-flex justify-content-between">
-                                        <div class="fw-bold text-white">{{ td.car.name }}</div>
-                                        <span class="badge bg-{{ 'success' if td.status == 'Confirmed' else 'secondary' }}">{{ td.status }}</span>
-                                    </div>
-                                    <div class="small text-secondary mt-1">
-                                        <i class="far fa-calendar me-2"></i> {{ td.date_booked }} at {{ td.time_slot }}
-                                    </div>
                                 </div>
                                 {% endfor %}
                             </div>
@@ -655,7 +637,7 @@
                             <div class="carousel-inner">
                                 {% for img in car.img_list %}
                                 <div class="carousel-item {{ 'active' if loop.first else '' }}">
-                                    <img src="{{ url_for('static', filename='uploads/' + img) }}" class="d-block w-100">
+                                    <img src="{{ url_for('static', filename='uploads/' + img) }}" class="d-block w-100" style="height: 500px; object-fit: cover;">
                                 </div>
                                 {% endfor %}
                             </div>
@@ -720,7 +702,6 @@
                         </div>
                         <div class="d-grid gap-2">
                             <button class="btn btn-primary fw-bold py-3 rounded-pill text-dark" data-bs-toggle="modal" data-bs-target="#enquiryModal">Enquire Now</button>
-                            <button class="btn btn-outline-warning fw-bold py-3 rounded-pill" data-bs-toggle="modal" data-bs-target="#testDriveModal">Book Test Drive</button>
                         </div>
                     </div>
                 </div>
@@ -765,7 +746,6 @@
                             <a href="#" class="nav-link-admin" onclick="showTab('inbox')"><i class="fas fa-envelope me-2"></i> Inbox</a>
                             <a href="#" class="nav-link-admin" onclick="showTab('banners')"><i class="fas fa-images me-2"></i> Banners</a>
                             <a href="#" class="nav-link-admin" onclick="showTab('promos')"><i class="fas fa-tags me-2"></i> Promo Codes</a>
-                            <a href="#" class="nav-link-admin" onclick="showTab('testdrives')"><i class="fas fa-calendar-check me-2"></i> Test Drives</a>
                             <a href="#" class="nav-link-admin" onclick="showTab('inventory')"><i class="fas fa-car me-2"></i> Inventory</a>
                             <a href="/" class="nav-link-admin mt-lg-5 text-secondary"><i class="fas fa-sign-out-alt me-2"></i> Exit</a>
                         </nav>
@@ -859,28 +839,6 @@
                                     </div>
                                     {% endfor %}
                                 </div>
-                            </div>
-                        </div>
-                        <div id="testdrives" class="admin-tab d-none">
-                            <h2 class="fw-bold mb-4" style="color: var(--text-color);">Test Drive Schedule</h2>
-                            <div class="glass-panel p-0 table-responsive">
-                                <table class="table table-dark table-hover mb-0">
-                                    <thead><tr><th>User</th><th>Car</th><th>Date/Time</th><th>Status</th><th>Action</th></tr></thead>
-                                    <tbody>
-                                        {% for td in test_drives %}
-                                        <tr>
-                                            <td>{{ td.user.name }}<br><small class="text-muted">{{ td.user.email }}</small></td>
-                                            <td>{{ td.car.name }}</td>
-                                            <td>{{ td.date_booked }} | {{ td.time_slot }}</td>
-                                            <td><span class="badge bg-{{ 'success' if td.status == 'Confirmed' else 'warning' }}">{{ td.status }}</span></td>
-                                            <td>
-                                                <a href="/admin/testdrive/update/{{ td.id }}/Confirmed" class="btn btn-sm btn-success"><i class="fas fa-check"></i></a>
-                                                <a href="/admin/testdrive/update/{{ td.id }}/Completed" class="btn btn-sm btn-secondary"><i class="fas fa-flag-checkered"></i></a>
-                                            </td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
                             </div>
                         </div>
                         <div id="inventory" class="admin-tab d-none">
@@ -1042,29 +1000,6 @@
                             <textarea name="message" class="form-control bg-dark text-white border-secondary mb-3" rows="3">I am interested in the {{ car.name }}...</textarea>
                             <button class="btn btn-primary w-100 fw-bold">Send Message</button>
                         </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="modal fade" id="testDriveModal" tabindex="-1">
-            <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content glass-panel border-0 text-white">
-                    <div class="modal-header"><h5 class="modal-title">Book Test Drive</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
-                    <div class="modal-body">
-                        {% if current_user.is_authenticated %}
-                            <form action="/book-test-drive" method="POST">
-                                <input type="hidden" name="car_id" value="{{ car.id }}">
-                                <div class="mb-3"><label>Select Date</label><input type="date" name="date" class="form-control bg-dark text-white border-secondary" required></div>
-                                <div class="mb-3"><label>Preferred Time</label><select name="time" class="form-select bg-dark text-white border-secondary"><option>Morning (10 AM - 12 PM)</option><option>Afternoon (12 PM - 4 PM)</option><option>Evening (4 PM - 7 PM)</option></select></div>
-                                <button class="btn btn-warning w-100 fw-bold">Confirm Booking</button>
-                            </form>
-                        {% else %}
-                            <div class="text-center py-4">
-                                <p>Please login to book a test drive.</p>
-                                <a href="/login" class="btn btn-primary">Login Now</a>
-                            </div>
-                        {% endif %}
                     </div>
                 </div>
             </div>
