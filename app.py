@@ -2,6 +2,7 @@ import os
 import json
 import io
 import random
+import uuid # <--- NEW: Required for unique image names
 from datetime import datetime, timedelta
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -97,13 +98,12 @@ class PromoCode(db.Model):
 
 class Banner(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    image = db.Column(db.Text) # Fixed: Unlimited length for image names
+    image = db.Column(db.Text) # Unlimited length for image names
     title = db.Column(db.String(100))
     subtitle = db.Column(db.String(200))
     is_active = db.Column(db.Boolean, default=True)
 
-# --- NEW MODEL: IMAGE STORAGE ---
-# This stores the actual image data in the DB so it doesn't disappear on Render
+# --- MODEL: IMAGE STORAGE ---
 class ImagePool(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), unique=True)
@@ -114,26 +114,30 @@ class ImagePool(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
+# --- HELPER: SAFE INT ---
+# Prevents crashes if a number field is left empty
+def safe_int(value):
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return 0
+
 # --- HELPER: SAVE IMAGE TO DB ---
 def save_image_to_db(file):
     if not file or file.filename == '':
         return None
     
-    # Create a unique filename
+    # Generate a random unique name using UUID to prevent collisions
     ext = os.path.splitext(file.filename)[1]
-    original_name = os.path.splitext(secure_filename(file.filename))[0]
-    # Shorten name to avoid issues, add timestamp for uniqueness
-    unique_name = f"{original_name[:20]}_{int(datetime.utcnow().timestamp())}{ext}"
+    unique_name = f"{uuid.uuid4().hex}{ext}"
     
     # Read file data
     file_data = file.read()
     
-    # Check if exists (unlikely due to timestamp)
-    existing = ImagePool.query.filter_by(name=unique_name).first()
-    if not existing:
-        new_img = ImagePool(name=unique_name, data=file_data, mimetype=file.mimetype or 'image/jpeg')
-        db.session.add(new_img)
-        db.session.commit()
+    # Save to DB
+    new_img = ImagePool(name=unique_name, data=file_data, mimetype=file.mimetype or 'image/jpeg')
+    db.session.add(new_img)
+    db.session.commit()
         
     return unique_name
 
@@ -158,7 +162,6 @@ def home():
     return render_template('index.html', page='home', cars=featured, suvs=suvs, sedans=sedans, banners=banners, latest_promo=latest_promo)
 
 # --- SPECIAL ROUTE: SERVE IMAGES FROM DB ---
-# This overrides the default static folder for uploads to serve from DB
 @app.route('/static/uploads/<path:filename>')
 def custom_static(filename):
     # Try to find in DB first
@@ -166,9 +169,8 @@ def custom_static(filename):
     if img_entry:
         return send_file(io.BytesIO(img_entry.data), mimetype=img_entry.mimetype)
     
-    # If not in DB, fallback to default behavior (or return default image)
-    # This covers 'default.jpg' if you haven't uploaded it to DB yet
-    return redirect(url_for('static', filename='img/default_car.jpg')) # Point to a real asset or handle 404
+    # If not in DB, return a 404 or a placeholder
+    return "Image not found", 404
 
 @app.route('/inventory')
 def inventory():
@@ -260,7 +262,7 @@ def book_test_drive():
 @login_required
 def add_review():
     car_id = request.form.get('car_id')
-    rating = int(request.form.get('rating'))
+    rating = safe_int(request.form.get('rating'))
     comment = request.form.get('comment')
     new_rev = Review(user_id=current_user.id, car_id=car_id, rating=rating, comment=comment)
     db.session.add(new_rev)
@@ -390,22 +392,22 @@ def add_car():
     img_names = []
     
     for f in files:
-        # UPDATED: Save to DB instead of folder
         fname = save_image_to_db(f)
         if fname:
             img_names.append(fname)
             
     if not img_names: img_names = ['default.jpg']
     
+    # FIX: Use safe_int to prevent crashes on empty fields
     new_car = Car(
         name=request.form['name'],
         brand=request.form['brand'],
         category=request.form['category'],
-        price=int(request.form['price']),
-        year=int(request.form['year']),
+        price=safe_int(request.form['price']),
+        year=safe_int(request.form['year']),
         fuel=request.form['fuel'],
         transmission=request.form['transmission'],
-        km_driven=int(request.form['km_driven']),
+        km_driven=safe_int(request.form['km_driven']),
         description=request.form['description'],
         images=json.dumps(img_names)
     )
@@ -421,7 +423,7 @@ def edit_car(car_id):
     car = Car.query.get(car_id)
     if car:
         car.name = request.form['name']
-        car.price = int(request.form['price'])
+        car.price = safe_int(request.form['price'])
         car.status = request.form['status']
         db.session.commit()
         flash("Vehicle Updated", "success")
@@ -432,8 +434,6 @@ def edit_car(car_id):
 def delete_car(car_id):
     if not current_user.is_admin: return redirect(url_for('home'))
     car = Car.query.get(car_id)
-    # Note: We are not auto-deleting images from ImagePool to prevent accidental data loss 
-    # of shared images, but you could add that logic here.
     Wishlist.query.filter_by(car_id=car.id).delete()
     Enquiry.query.filter_by(car_id=car.id).delete()
     TestDrive.query.filter_by(car_id=car.id).delete()
@@ -474,7 +474,7 @@ def update_testdrive(td_id, status):
 def create_promo():
     if not current_user.is_admin: return redirect(url_for('home'))
     code = request.form.get('code')
-    amount = int(request.form.get('amount'))
+    amount = safe_int(request.form.get('amount'))
     db.session.add(PromoCode(code=code, discount_amount=amount))
     db.session.commit()
     flash(f"Promo Code {code} Created", "success")
@@ -497,11 +497,9 @@ def add_banner():
     title = request.form.get('title')
     subtitle = request.form.get('subtitle')
     
-    # UPDATED: Save to DB
     fname = save_image_to_db(file)
     
     if fname:
-        # FIX: Explicitly set is_active to True
         db.session.add(Banner(image=fname, title=title, subtitle=subtitle, is_active=True))
         db.session.commit()
         flash("Banner Added (Saved to DB)", "success")
