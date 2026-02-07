@@ -1,12 +1,11 @@
 import os
 import json
 import io
-import random
-import uuid # <--- NEW: Required for unique image names
+import uuid 
 from datetime import datetime, timedelta
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, abort, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from sqlalchemy import func
@@ -22,6 +21,10 @@ if database_url and database_url.startswith("postgres://"):
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///babacarbazar_mega.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Define the physical upload folder (for GitHub assets)
+basedir = os.path.abspath(os.path.dirname(__file__))
+app.config['UPLOAD_FOLDER'] = os.path.join(basedir, 'static/uploads')
 # -----------------------------
 
 # --- EXTENSIONS ---
@@ -98,7 +101,7 @@ class PromoCode(db.Model):
 
 class Banner(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    image = db.Column(db.Text) # Unlimited length for image names
+    image = db.Column(db.Text) 
     title = db.Column(db.String(100))
     subtitle = db.Column(db.String(200))
     is_active = db.Column(db.Boolean, default=True)
@@ -107,7 +110,7 @@ class Banner(db.Model):
 class ImagePool(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), unique=True)
-    data = db.Column(db.LargeBinary) # Stores the file bytes
+    data = db.Column(db.LargeBinary) 
     mimetype = db.Column(db.String(50))
 
 @login_manager.user_loader
@@ -115,7 +118,6 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # --- HELPER: SAFE INT ---
-# Prevents crashes if a number field is left empty
 def safe_int(value):
     try:
         return int(value)
@@ -123,21 +125,28 @@ def safe_int(value):
         return 0
 
 # --- HELPER: SAVE IMAGE TO DB ---
-def save_image_to_db(file):
+def save_image_to_db(file, preserve_name=False):
     if not file or file.filename == '':
         return None
     
-    # Generate a random unique name using UUID to prevent collisions
-    ext = os.path.splitext(file.filename)[1]
-    unique_name = f"{uuid.uuid4().hex}{ext}"
-    
-    # Read file data
     file_data = file.read()
     
-    # Save to DB
-    new_img = ImagePool(name=unique_name, data=file_data, mimetype=file.mimetype or 'image/jpeg')
-    db.session.add(new_img)
-    db.session.commit()
+    if preserve_name:
+        unique_name = secure_filename(file.filename)
+        existing = ImagePool.query.filter_by(name=unique_name).first()
+        if existing:
+            existing.data = file_data
+            existing.mimetype = file.mimetype or 'image/jpeg'
+            db.session.commit()
+            return unique_name
+    else:
+        ext = os.path.splitext(file.filename)[1]
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+    
+    if not ImagePool.query.filter_by(name=unique_name).first():
+        new_img = ImagePool(name=unique_name, data=file_data, mimetype=file.mimetype or 'image/jpeg')
+        db.session.add(new_img)
+        db.session.commit()
         
     return unique_name
 
@@ -148,10 +157,8 @@ def home():
     featured = Car.query.filter_by(status='Available').order_by(Car.created_at.desc()).limit(6).all()
     suvs = Car.query.filter_by(category='SUV', status='Available').limit(3).all()
     sedans = Car.query.filter_by(category='Sedan', status='Available').limit(3).all()
-    
     banners = Banner.query.filter_by(is_active=True).all()
     if not banners: banners = []
-        
     latest_promo = PromoCode.query.filter_by(is_active=True).order_by(PromoCode.id.desc()).first()
     
     for c_list in [featured, suvs, sedans]:
@@ -161,16 +168,22 @@ def home():
             
     return render_template('index.html', page='home', cars=featured, suvs=suvs, sedans=sedans, banners=banners, latest_promo=latest_promo)
 
-# --- SPECIAL ROUTE: SERVE IMAGES FROM DB ---
+# --- FIXED: HYBRID STATIC ROUTE (DB + DISK) ---
+# This is the crucial fix. It checks DB first, then checks the real folder.
 @app.route('/static/uploads/<path:filename>')
 def custom_static(filename):
-    # Try to find in DB first
+    # 1. Try DB (For new uploads)
     img_entry = ImagePool.query.filter_by(name=filename).first()
     if img_entry:
         return send_file(io.BytesIO(img_entry.data), mimetype=img_entry.mimetype)
     
-    # If not in DB, return a 404 or a placeholder
-    return "Image not found", 404
+    # 2. Try Physical File (For GitHub assets like naman.jpeg)
+    # We use send_from_directory to safely serve files from the folder
+    try:
+        return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    except:
+        # 3. 404 Not Found
+        return "Image not found", 404
 
 @app.route('/inventory')
 def inventory():
@@ -201,6 +214,9 @@ def car_detail(car_id):
     car = Car.query.get_or_404(car_id)
     try: car.img_list = json.loads(car.images)
     except: car.img_list = ['default.jpg']
+    
+    if not isinstance(car.img_list, list): car.img_list = [car.img_list]
+
     similar = Car.query.filter(Car.category == car.category, Car.id != car.id).limit(3).all()
     for s in similar:
         try: s.img_list = json.loads(s.images)
@@ -398,7 +414,6 @@ def add_car():
             
     if not img_names: img_names = ['default.jpg']
     
-    # FIX: Use safe_int to prevent crashes on empty fields
     new_car = Car(
         name=request.form['name'],
         brand=request.form['brand'],
@@ -434,12 +449,13 @@ def edit_car(car_id):
 def delete_car(car_id):
     if not current_user.is_admin: return redirect(url_for('home'))
     car = Car.query.get(car_id)
-    Wishlist.query.filter_by(car_id=car.id).delete()
-    Enquiry.query.filter_by(car_id=car.id).delete()
-    TestDrive.query.filter_by(car_id=car.id).delete()
-    Review.query.filter_by(car_id=car.id).delete()
-    db.session.delete(car)
-    db.session.commit()
+    if car:
+        Wishlist.query.filter_by(car_id=car.id).delete()
+        Enquiry.query.filter_by(car_id=car.id).delete()
+        TestDrive.query.filter_by(car_id=car.id).delete()
+        Review.query.filter_by(car_id=car.id).delete()
+        db.session.delete(car)
+        db.session.commit()
     return redirect(url_for('admin'))
 
 @app.route('/admin/enquiry/read/<int:enq_id>')
@@ -498,11 +514,10 @@ def add_banner():
     subtitle = request.form.get('subtitle')
     
     fname = save_image_to_db(file)
-    
     if fname:
         db.session.add(Banner(image=fname, title=title, subtitle=subtitle, is_active=True))
         db.session.commit()
-        flash("Banner Added (Saved to DB)", "success")
+        flash("Banner Added", "success")
     else:
         flash("No file selected", "warning")
         
@@ -517,36 +532,54 @@ def delete_banner(b_id):
     db.session.commit()
     return redirect(url_for('admin'))
 
-# --- DB & ADMIN AUTO-SETUP ---
+# --- SPECIAL ROUTE: UPLOAD SITE ASSETS (OWNER IMAGES) ---
+# Use this to upload specific named files like 'naman.jpeg'
+@app.route('/admin/upload-site-images', methods=['GET', 'POST'])
+@login_required
+def upload_site_images():
+    if not current_user.is_admin: return redirect(url_for('home'))
+    
+    if request.method == 'POST':
+        files = request.files.getlist('files')
+        uploaded = []
+        for f in files:
+            # force preserve_name=True so 'naman.jpeg' stays 'naman.jpeg'
+            name = save_image_to_db(f, preserve_name=True)
+            uploaded.append(name)
+        return f"<h3>Uploaded Successfully: {', '.join(uploaded)}</h3><a href='/admin'>Back to Admin</a>"
+    
+    # Simple form to upload files
+    return """
+    <html><body>
+        <h2>Upload Site Assets (Owner Images)</h2>
+        <form method="post" enctype="multipart/form-data">
+            <input type="file" name="files" multiple>
+            <input type="submit" value="Upload Images">
+        </form>
+    </body></html>
+    """
+
+# --- DB SETUP & FIX ---
 with app.app_context():
     db.create_all()
     if not User.query.filter_by(email='babaadmin@gmail.com').first():
         admin_pass = generate_password_hash('@namanadmin', method='pbkdf2:sha256')
         db.session.add(User(name='BABA-CAR_BAZAR', email='babaadmin@gmail.com', password=admin_pass, is_admin=True))
         db.session.commit()
-        print("Admin Account Created Successfully!")
+        print("Admin Account Created.")
 
-# --- DB FIX ROUTE (RUN ONCE) ---
 @app.route('/fix-db')
 def fix_db():
     try:
-        # Create the new ImagePool table if it doesn't exist
         db.create_all()
-        
-        # NOTE: If Banner table is still old type, we drop it to recreate.
-        # This might delete existing banners, but it's necessary for the fix.
         try:
             Banner.__table__.drop(db.engine)
             db.create_all()
-            msg = "Banner table recreated. "
-        except:
-            msg = "Banner table check passed. "
-
-        return f"SUCCESS: {msg} ImagePool table is ready. You can now upload images and they will stay!"
+        except: pass
+        return "SUCCESS: Database Fixed & ImagePool Ready."
     except Exception as e:
         return f"Error: {str(e)}"
 
-# --- START SERVER ---
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
