@@ -497,10 +497,24 @@ with app.app_context():
         db.session.commit()
         print("Admin Account Created Successfully!")
 
+# --- TEMPORARY FIX ROUTE ---
+# Add this to app.py, push to GitHub, and then visit /fix-banners in your browser
+@app.route('/fix-banners')
+def fix_banners():
+    try:
+        # This deletes the old Banner table
+        Banner.__table__.drop(db.engine)
+        # This creates the new Banner table with the correct settings
+        db.create_all()
+        return "SUCCESS: Banner table has been updated! You can now upload long images."
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 # --- START SERVER ---
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
 
 
 
