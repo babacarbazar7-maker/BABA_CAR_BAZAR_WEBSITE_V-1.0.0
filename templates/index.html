@@ -1074,7 +1074,7 @@
         {% if page == 'login' or page == 'signup' %}
             <div class="d-flex justify-content-center align-items-center" style="min-height: 60vh;">
                 <div class="glass-panel p-5 text-center" style="max-width: 400px; width: 100%;">
-                    <h2 class="mb-4 fw-bold" style="color: var(--text-color);">{{ 'Admin Login' if page == 'login' else 'Join Us' }}</h2>
+                    <h2 class="mb-4 fw-bold" style="color: var(--text-color);">{{ 'Login' if page == 'login' else 'Join Us' }}</h2>
                     <form method="POST">
                         {% if page == 'signup' %}<input type="text" name="name" class="form-control bg-dark text-white border-secondary mb-3" placeholder="Full Name" required>{% endif %}
                         <input type="email" name="email" class="form-control bg-dark text-white border-secondary mb-3" placeholder="Email" required>
