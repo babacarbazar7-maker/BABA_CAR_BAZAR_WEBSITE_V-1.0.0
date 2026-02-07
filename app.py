@@ -113,7 +113,7 @@ class PromoCode(db.Model):
 
 class Banner(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    image = db.Column(db.String(100))
+    image = db.Column(db.Text)  # <--- CHANGED: Unlimited length
     title = db.Column(db.String(100))
     subtitle = db.Column(db.String(200))
     is_active = db.Column(db.Boolean, default=True)
@@ -501,5 +501,6 @@ with app.app_context():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
 
 
