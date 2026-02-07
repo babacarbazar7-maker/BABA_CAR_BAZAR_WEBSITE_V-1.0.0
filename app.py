@@ -479,14 +479,19 @@ def delete_banner(b_id):
     db.session.commit()
     return redirect(url_for('admin'))
 
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-        # Seed Admin
-        if not User.query.filter_by(email='babaadmin@gmail.com').first():
-            db.session.add(User(name='BABA-CAR_BAZAR', email='babaadmin@gmail.com', password=generate_password_hash('@namanadmin', method='pbkdf2:sha256'), is_admin=True))
-            db.session.commit()
+# --- AUTO-CREATE DATABASE & ADMIN (Run on every start) ---
+with app.app_context():
+    db.create_all()
     
-    # Use environment port for Render compatibility
+    # Check if Admin exists, if not create it
+    if not User.query.filter_by(email='babaadmin@gmail.com').first():
+        admin_pass = generate_password_hash('@namanadmin', method='pbkdf2:sha256')
+        db.session.add(User(name='BABA-CAR_BAZAR', email='babaadmin@gmail.com', password=admin_pass, is_admin=True))
+        db.session.commit()
+        print("Admin Account Created Successfully!")
+
+# --- START SERVER ---
+if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
