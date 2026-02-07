@@ -83,7 +83,7 @@ class TestDrive(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     car_id = db.Column(db.Integer, db.ForeignKey('car.id'))
     date_booked = db.Column(db.String(50)) 
-    # FIXED: Increased length from 20 to 100 to prevent crash
+    # FIXED: Increased limit to 100 chars to fix crash
     time_slot = db.Column(db.String(100))
     status = db.Column(db.String(20), default='Pending') 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -262,6 +262,7 @@ def book_test_drive():
     if not date or not time:
         flash("Please select both Date and Time.", "warning")
         return redirect(request.referrer)
+    # The database will now accept this longer time slot string
     new_td = TestDrive(user_id=current_user.id, car_id=car_id, date_booked=date, time_slot=time)
     db.session.add(new_td)
     db.session.commit()
@@ -547,23 +548,25 @@ with app.app_context():
         db.session.commit()
         print("Admin Account Created.")
 
+# --- CRITICAL FIX ROUTE ---
 @app.route('/fix-db')
 def fix_db():
     try:
-        db.create_all()
+        # We explicitly DROP the TestDrive table.
+        # SQLAlchemy will then re-create it with the new schema (String(100)) automatically
+        # when we run db.create_all() right after.
+        TestDrive.__table__.drop(db.engine)
         
-        # FIX: Drop TestDrive table to apply new 100 character limit
-        try:
-            TestDrive.__table__.drop(db.engine)
-            Banner.__table__.drop(db.engine) # Also fix Banner if needed
-            db.create_all()
-            msg = "TestDrive & Banner tables recreated. "
-        except: 
-            msg = "Tables check passed. "
-
-        return f"SUCCESS: {msg} Database Fixed."
+        # Also drop Banner to ensure it is fixed too
+        try: Banner.__table__.drop(db.engine)
+        except: pass
+        
+        db.create_all()
+        return "SUCCESS: Database Fixed! TestDrive table recreated with larger limit."
     except Exception as e:
-        return f"Error: {str(e)}"
+        # If table didn't exist or other error, try creating anyway
+        db.create_all()
+        return f"Fix attempted. Result: {str(e)}"
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
