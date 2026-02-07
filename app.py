@@ -262,7 +262,6 @@ def book_test_drive():
     if not date or not time:
         flash("Please select both Date and Time.", "warning")
         return redirect(request.referrer)
-    # The database will now accept this longer time slot string
     new_td = TestDrive(user_id=current_user.id, car_id=car_id, date_booked=date, time_slot=time)
     db.session.add(new_td)
     db.session.commit()
@@ -552,12 +551,10 @@ with app.app_context():
 @app.route('/fix-db')
 def fix_db():
     try:
-        # We explicitly DROP the TestDrive table.
-        # SQLAlchemy will then re-create it with the new schema (String(100)) automatically
-        # when we run db.create_all() right after.
+        # DROP the TestDrive table to reset schema limits
         TestDrive.__table__.drop(db.engine)
         
-        # Also drop Banner to ensure it is fixed too
+        # Also drop Banner to ensure it matches
         try: Banner.__table__.drop(db.engine)
         except: pass
         
